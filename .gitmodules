@@ -1,0 +1,6 @@
+[submodule "rl_optimizer/groove"]
+	path = rl_optimizer/groove
+	url = https://github.com/EmptyJackson/groove
+[submodule "rl_optimizer/learned_optimization"]
+	path = rl_optimizer/learned_optimization
+	url = https://github.com/google/learned_optimization
