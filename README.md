@@ -36,6 +36,11 @@ python3 -m rl_optimizer.eval --envs <env-names> --exp-name <wandb experiment IDs
 
 # ⬇️ Installation
 
+We include submodules for [Learned Optimization](https://github.com/google/learned_optimization) and [GROOVE](https://github.com/EmptyJackson/groove). Therefore, when cloning this repo, ensure to use `--recurse-submodules`:
+```bash
+git clone --recurse-submodules git@github.com:AlexGoldie/rl-learned-optimization.git
+```
+
 ## 📝 Requirements
 
 We include requirements in `setup/requirements.txt`. Dependencies can be install locally using:

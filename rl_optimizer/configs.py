@@ -5,7 +5,7 @@ all_configs = {
         "ANNEAL_LR": True,
         "NUM_ENVS": 64,
         "NUM_STEPS": 128,
-        "TOTAL_TIMESTEPS": 1e5,
+        "TOTAL_TIMESTEPS": 1e7,
         "UPDATE_EPOCHS": 4,
         "NUM_MINIBATCHES": 8,
         "GAMMA": 0.99,
@@ -24,7 +24,7 @@ all_configs = {
     "freeway": {
         "NUM_ENVS": 64,
         "NUM_STEPS": 128,
-        "TOTAL_TIMESTEPS": 1e5,
+        "TOTAL_TIMESTEPS": 1e7,
         "UPDATE_EPOCHS": 4,
         "NUM_MINIBATCHES": 8,
         "GAMMA": 0.99,
@@ -43,7 +43,7 @@ all_configs = {
     "breakout": {
         "NUM_ENVS": 64,
         "NUM_STEPS": 128,
-        "TOTAL_TIMESTEPS": 1e5,
+        "TOTAL_TIMESTEPS": 1e7,
         "UPDATE_EPOCHS": 4,
         "NUM_MINIBATCHES": 8,
         "GAMMA": 0.99,
@@ -62,7 +62,7 @@ all_configs = {
     "spaceinvaders": {
         "NUM_ENVS": 64,
         "NUM_STEPS": 128,
-        "TOTAL_TIMESTEPS": 1e5,
+        "TOTAL_TIMESTEPS": 1e7,
         "UPDATE_EPOCHS": 4,
         "NUM_MINIBATCHES": 8,
         "GAMMA": 0.99,
@@ -81,7 +81,7 @@ all_configs = {
     "ant": {
         "NUM_ENVS": 2048,
         "NUM_STEPS": 10,
-        "TOTAL_TIMESTEPS": 5e5,
+        "TOTAL_TIMESTEPS": 5e7,
         "UPDATE_EPOCHS": 4,
         "NUM_MINIBATCHES": 32,
         "GAMMA": 0.99,
@@ -106,7 +106,7 @@ all_configs = {
         "ANNEAL_LR": True,
         "NUM_ENVS": 1024,
         "NUM_STEPS": 20,
-        "TOTAL_TIMESTEPS": 3e5,
+        "TOTAL_TIMESTEPS": 3e7,
         "UPDATE_EPOCHS": 2,
         "NUM_MINIBATCHES": 16,
         "GAMMA": 0.99,

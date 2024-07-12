@@ -398,7 +398,8 @@ if __name__ == "__main__":
             "rand_all",
         ]
         grids = True
-
+    else:
+        grids = False
     make_plot(
         exp_names=args.exp_name,
         exp_nums=args.exp_num,
