@@ -3,6 +3,8 @@
 <p align="center">
     <a href= "https://arxiv.org/abs/2407.07082">
         <img src="https://img.shields.io/badge/arXiv-2407.07082-b31b1b.svg" /></a>
+    <a href= "https://twitter.com/AlexDGoldie/status/1813228088500576307">
+        <img src="https://img.shields.io/badge/Twitter-1DA1F2.svg" /></a>
 </p>
 
 <p align="center">
