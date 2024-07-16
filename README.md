@@ -1,6 +1,12 @@
 <h1 align="center"> <em>OPEN</em>: Learned Optimization for RL in JAX </h1>
+
 <p align="center">
-  <img src="images/OPEN Logo.jpeg" width="560">
+    <a href= "https://arxiv.org/abs/2407.07082">
+        <img src="https://img.shields.io/badge/arXiv-2407.07082-b31b1b.svg" /></a>
+</p>
+
+<p align="center">
+    <img src="Images/OPEN_Animation.gif" alt="animated" width="75%"/>
 </p>
 
 This is the official implementation of <em>OPEN</em> from *Can Learned Optimization Make Reinforcement Less Difficult*, AutoRL Workshop @ ICML 2024 (**Spotlight**).
