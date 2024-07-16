@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-    <img src="Images/OPEN_Animation.gif" alt="animated" width="75%"/>
+    <img src="images/OPEN_Animation.gif" alt="animated" width="75%"/>
 </p>
 
 This is the official implementation of <em>OPEN</em> from *Can Learned Optimization Make Reinforcement Less Difficult*, AutoRL Workshop @ ICML 2024 (**Spotlight**).
