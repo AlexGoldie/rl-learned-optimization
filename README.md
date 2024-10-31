@@ -84,7 +84,7 @@ If you use <em>OPEN</em> in your work, please cite the following:
 ```
 @inproceedings{goldie2024can,
     author={Alexander D. Goldie and Chris Lu and Matthew Thomas Jackson and Shimon Whiteson and Jakob Nicolaus Foerster},
-    booktitle={Automated Reinforcement Learning: Exploring Meta-Learning, AutoML, and LLMs},
+    booktitle={Advances in Neural Information Processing Systems},
     title={Can Learned Optimization Make Reinforcement Learning Less Difficult?},
     year={2024},
 }
