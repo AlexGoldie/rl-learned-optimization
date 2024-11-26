@@ -11,7 +11,7 @@
     <img src="images/OPEN_Animation.gif" alt="animated" width="75%"/>
 </p>
 
-This is the official implementation of <em>OPEN</em> from *Can Learned Optimization Make Reinforcement Less Difficult*, AutoRL Workshop @ ICML 2024 (**Spotlight**).
+This is the official implementation of <em>OPEN</em> from *Can Learned Optimization Make Reinforcement Less Difficult*, NeurIPS 2024 (**Spotlight**) and the AutoRL Workshop @ ICML 2024 (**Spotlight**).
 
 
 <em>OPEN</em> is a framework for learning to optimize (L2O) in reinforcement learning. Here, we provide full <a href="https://github.com/google/jax">JAX</a> code to replicate the experiments in our paper and foster future work in this direction. Our current codebase can be used with environments from <a href="https://github.com/RobertTLange/gymnax">gymnax</a> or <a href="https://github.com/google/brax">Brax</a>.
