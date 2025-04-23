@@ -5,23 +5,20 @@ from typing import Any, Optional
 import flax
 import flax.linen as nn
 import gin
-
 import jax
 from jax import lax
 import jax.numpy as jnp
-import ipdb
-import sys
-from rl_optimizer import base as opt_base
-
-sys.path.insert(0, "rl_optimizer/learned_optimization")
-from learned_optimization import tree_utils
-from learned_optimization.learned_optimizers import (
-    common,
-)
-
-sys.path.remove("rl_optimizer/learned_optimization")
 from optax import adam
 import optax
+
+import sys
+
+import base as opt_base
+
+from learned_optimization.learned_optimization import tree_utils
+from learned_optimization.learned_optimization.learned_optimizers import (
+    common,
+)
 
 
 PRNGKey = jnp.ndarray

@@ -43,7 +43,7 @@ all_configs = {
     "breakout": {
         "NUM_ENVS": 64,
         "NUM_STEPS": 128,
-        "TOTAL_TIMESTEPS": 1e7,
+        "TOTAL_TIMESTEPS": 5e5,
         "UPDATE_EPOCHS": 4,
         "NUM_MINIBATCHES": 8,
         "GAMMA": 0.99,

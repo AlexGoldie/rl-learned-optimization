@@ -1,24 +1,24 @@
 import sys
 
-
-import jax
-import jax.numpy as jnp
 import numpy as np
 import matplotlib
 import matplotlib.pyplot as plt
-from rl_optimizer.configs import all_configs as all_configs
 import os
-from evosax import OpenES, ParameterReshaper, FitnessShaper
 import argparse
 import seaborn as sns
 import pandas as pd
-
 import wandb
 from scipy.interpolate import interp1d
 import time
 
-from rl_optimizer.network import GRU_Opt as optim
+import jax
+import jax.numpy as jnp
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P, NamedSharding
 
+from configs import all_configs as all_configs
+from network import GRU_Opt as optim
+from utils import ParameterReshaper
 
 api = wandb.Api()
 
@@ -84,7 +84,23 @@ def make_plot(
     multi=False,
     training=False,
     grids=False,
+    params=None,
+    mesh=None,
 ):
+
+    devices = jax.devices()
+    sharding_p = NamedSharding(
+        mesh,
+        P(
+            None,
+        ),
+    )
+    sharding_rng = NamedSharding(
+        mesh,
+        P(
+            "dim",
+        ),
+    )
 
     if training:
         p = "training"
@@ -104,7 +120,6 @@ def make_plot(
 
     if not os.path.exists(p):
         os.mkdir(p)
-    print(envs)
 
     returns_list = dict()
     param_means = dict()
@@ -112,7 +127,7 @@ def make_plot(
     abs_param_means = dict()
     runtimes = dict()
 
-    from rl_optimizer.train import (
+    from train import (
         make_train as meta_make_train,
     )
 
@@ -136,14 +151,15 @@ def make_plot(
 
         if pretrained:
             if multi:
-                exp_name = f"rl_optimizer/pretrained/multi_OPEN.npy"
+                exp_name = f"pretrained/multi_OPEN.npy"
                 larger = True
             else:
-                exp_name = f"rl_optimizer/pretrained/{env}_OPEN.npy"
+                exp_name = f"pretrained/{env}_OPEN.npy"
             params = jnp.array(jnp.load(exp_name, allow_pickle=True))
 
         else:
             if training:
+                params = params
                 exp_name = exp_names
                 exp_num = exp_nums
             else:
@@ -154,45 +170,40 @@ def make_plot(
                     exp_name = exp_names[i]
                     exp_num = exp_nums[i]
 
-            run_path = f"OPEN/{exp_name}"
-            run = api.run(run_path)
-            restored = wandb.restore(
-                f"curr_param_{exp_num}.npy",
-                run_path=run_path,
-                root=p,
-                replace=True,
+                run_path = f"OPEN/{exp_name}"
+                run = api.run(run_path)
+                restored = wandb.restore(
+                    f"curr_param_{exp_num}.npy",
+                    run_path=run_path,
+                    root=p,
+                    replace=True,
+                )
+                print(f"name: {restored.name},    env = {envs[i]}")
+                params = jnp.array(jnp.load(restored.name, allow_pickle=True))
+
+        # Need to reshape saved params as they are saved as np arrays
+        if not training:
+            if larger:
+                hidden_size = 32
+                gru_features = 16
+            else:
+                hidden_size = 16
+                gru_features = 8
+            pholder = optim(hidden_size=hidden_size, gru_features=gru_features).init(
+                jax.random.PRNGKey(0)
             )
-            print(f"name: {restored.name},    env = {envs[i]}")
-            params = jnp.array(jnp.load(restored.name, allow_pickle=True))
+            param_reshaper = ParameterReshaper(pholder)
+            params = param_reshaper.reshape_single(params)
 
         all_configs[f"{env}"]["larger"] = larger
 
-        if larger:
-            meta_opt = optim(hidden_size=32, gru_features=16)
-        else:
-            meta_opt = optim(hidden_size=16, gru_features=8)
         make_train = meta_make_train
-
-        meta_params_pholder = meta_opt.init(jax.random.PRNGKey(0))
-
-        strategy = OpenES(
-            popsize=2,
-            pholder_params=meta_params_pholder,
-            opt_name="adam",
-            centered_rank=True,
-            maximize=True,
-        )
-
-        meta_params = strategy.param_reshaper.reshape_single(params)
 
         rng = jax.random.PRNGKey(42)
         all_configs[f"{env}"]["VISUALISE"] = True
 
         start = time.time()
         rngs = jax.random.split(rng, num_runs)
-        rngs = jnp.reshape(rngs, (jax.local_device_count(), -1, 2))
-        params = jnp.tile(params, (jax.local_device_count(), 1))
-        meta_params = strategy.param_reshaper.reshape(params)
         if env == "gridworld":
             asdf = jax.jit(
                 jax.vmap(
@@ -201,14 +212,12 @@ def make_plot(
                 ),
                 static_argnames=["grid_type"],
             )
-            asdf = jax.jit(
-                jax.vmap(asdf, in_axes=(strategy.param_reshaper.vmap_dict, None, None)),
-                static_argnames=["grid_type"],
-            )
-            if pmap:
-                asdf = jax.pmap(asdf, static_broadcasted_argnums=2)
 
-            out, metrics = asdf(meta_params, rngs, i)
+            if pmap:
+                params = jax.device_put(params, sharding_p)
+                rngs = jax.device_put(rngs, sharding_rng)
+
+            out, metrics = asdf(params, rngs, i)
 
         else:
             asdf = jax.jit(
@@ -218,13 +227,12 @@ def make_plot(
                 )
             )
 
-            asdf = jax.jit(
-                jax.vmap(asdf, in_axes=(strategy.param_reshaper.vmap_dict, None))
-            )
             if pmap:
-                asdf = jax.pmap(asdf)
+                params = jax.device_put(params, sharding_p)
+                rngs = jax.device_put(rngs, sharding_rng)
 
-            out, metrics = asdf(meta_params, rngs)
+            out, metrics = asdf(params, rngs)
+            out, metrics = jax.device_get(out), jax.device_get(metrics)
 
         fitness = metrics["returned_episode_returns"][..., -1, -1, :].mean()
         end = time.time()
@@ -235,6 +243,9 @@ def make_plot(
         returns = (
             metrics["returned_episode_returns"].mean(-1).mean(-1).reshape(num_runs, -1)
         )
+
+        if training:
+            wandb.log({f"eval/{env}/fitness_at_mean": fitness}, step=exp_num)
 
         config_for_index = all_configs[f"{env}"]
         index_from = episode_lengths[env]
@@ -326,10 +337,11 @@ def make_plot(
                 )
                 wandb.log(
                     {
-                        f"{exp_num}/{title}_{ylabel}_{env}": wandb.Image(
+                        f"eval_figs/{env}/{ylabel}": wandb.Image(
                             f"{p}/{env}/{title}_{ylabel}_{env}.png"
                         )
-                    }
+                    },
+                    step=exp_num,
                 )
 
     plot_all(
@@ -362,8 +374,9 @@ if __name__ == "__main__":
     parser.add_argument("--exp-num", nargs="+", type=str, default=None)
     parser.add_argument("--envs", nargs="+", required=False, default=None)
     parser.add_argument("--num-runs", type=int, default=3)
-    parser.add_argument("--pmap", default=False, action="store_true")
-    parser.add_argument("--no-pmap", dest="pmap", action="store_false")
+    parser.add_argument(
+        "--pmap", default=jax.local_device_count() > 1, action="store_true"
+    )
     parser.add_argument("--title", type=str)
     parser.add_argument("--larger", default=False, action="store_true")
     parser.add_argument("--pretrained", default=False, action="store_true")
@@ -386,6 +399,8 @@ if __name__ == "__main__":
     matplotlib.rcParams["axes.formatter.limits"] = [-3, 3]
     color_palette = sns.color_palette("colorblind", n_colors=5)
     plt.rcParams["axes.prop_cycle"] = plt.cycler(color=color_palette)
+    devices = jax.local_devices()
+    mesh = Mesh(devices, axis_names=("dim",))
 
     if args.envs == ["gridworld"]:
         args.envs = [
@@ -400,6 +415,7 @@ if __name__ == "__main__":
         grids = True
     else:
         grids = False
+
     make_plot(
         exp_names=args.exp_name,
         exp_nums=args.exp_num,
@@ -411,4 +427,5 @@ if __name__ == "__main__":
         pretrained=args.pretrained,
         multi=args.multi,
         grids=grids,
+        mesh=mesh,
     )

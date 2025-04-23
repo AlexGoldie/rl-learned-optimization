@@ -1,19 +1,20 @@
-"""training loop for OPEN on non-gridworld environments"""
+"""(inner and outer) training loop for OPEN"""
 
-import sys
-
-import jax
-import jax.numpy as jnp
-import flax.linen as nn
 import numpy as np
-import optax
-from flax.linen.initializers import constant, orthogonal
 from typing import Sequence, NamedTuple, Any
-from flax.training.train_state import TrainState
-import flax
-import distrax
-import gymnax
-from rl_optimizer.utils import (
+import os
+import os.path as osp
+from datetime import datetime
+from tqdm import tqdm
+import wandb
+import time
+from functools import partial
+import argparse
+
+from network import GRU_Opt
+from configs import all_configs
+from eval import make_plot
+from utils import (
     GymnaxGymWrapper,
     GymnaxLogWrapper,
     FlatWrapper,
@@ -25,35 +26,42 @@ from rl_optimizer.utils import (
     VecEnv,
 )
 
+import jax
+import jax.numpy as jnp
+import flax.linen as nn
+import optax
+from flax.linen.initializers import constant, orthogonal
+from flax.training.train_state import TrainState
+import flax
+import distrax
+import gymnax
 from brax.envs.wrappers.gym import GymWrapper
 from brax import envs
-from evosax import OpenES, ParameterReshaper, FitnessShaper, CMA_ES, SNES, SimpleGA
-from evosax.utils import ESLog
-
-import os
-import os.path as osp
-from datetime import datetime
-from rl_optimizer.network import GRU_Opt
+import evosax
+from evosax.algorithms.distribution_based import Open_ES
+from evosax.core.fitness_shaping import (
+    centered_rank_fitness_shaping_fn,
+    identity_fitness_shaping_fn,
+)
 from gymnax.environments import spaces
-
-from tqdm import tqdm
-import wandb
-import time
 from optax import adam
-from functools import partial
+from jax.sharding import Mesh
+from jax.sharding import PartitionSpec as P, NamedSharding
 
-import argparse
-from rl_optimizer.configs import all_configs
+import sys
 
-from rl_optimizer.eval import make_plot
+# GROOVE imports cause an issue
+groove_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "groove"))
+sys.path.insert(0, groove_path)
 
-sys.path.insert(0, "rl_optimizer/groove")
+# Import the modules you need
+# The 'groove' module will be found in the original path
+# The 'environments' module will be found via the path we just added
+import groove.environments.gridworld.configs as grid_conf
+from groove.environments.gridworld import gridworld as grid
+from groove.environments.gridworld.configs import ENV_MODE_KWARGS
 
-import environments.gridworld.gridworld as grid
-import environments.gridworld.configs as grid_conf
-from environments.gridworld.configs import ENV_MODE_KWARGS
-
-sys.path.remove("rl_optimizer/groove")
+sys.path.remove(groove_path)
 
 
 class Actor(nn.Module):
@@ -704,12 +712,13 @@ if __name__ == "__main__":
     parser.add_argument("--num-rollouts", type=int, default=1)
     parser.add_argument("--save-every-k", type=int, default=24)
     parser.add_argument("--noise-level", type=float, default=0.03)
-    parser.add_argument("--pmap", default=False, action="store_true")
-    parser.add_argument("--no-pmap", dest="pmap", action="store_false")
+    parser.add_argument(
+        "--pmap", default=jax.local_device_count() > 1, action="store_true"
+    )
     parser.add_argument("--wandb-name", type=str, default="OPEN")
     parser.add_argument("--wandb-entity", type=str, default=None)
-    parser.add_argument("--sigma-decay", type=float, default=0.99)
-    parser.add_argument("--lr-decay", type=float, default=0.99)
+    parser.add_argument("--sigma-decay", type=float, default=0.999)
+    parser.add_argument("--lr-decay", type=float, default=0.999)
     parser.add_argument("--larger", default=False, action="store_true")
 
     args = parser.parse_args()
@@ -751,20 +760,36 @@ if __name__ == "__main__":
     else:
         meta_opt = GRU_Opt(hidden_size=16, gru_features=8)
     params = meta_opt.init(jax.random.PRNGKey(0))
-    param_reshaper = ParameterReshaper(params)
+
+    params = jax.tree.map(lambda x: jnp.zeros_like(x), params)
+
+    devices = jax.devices()
+    mesh = Mesh(devices, axis_names=("dim",))
+    sharding_p = NamedSharding(
+        mesh,
+        P(
+            "dim",
+        ),
+    )
+    sharding_rng = NamedSharding(
+        mesh,
+        P(
+            "dim",
+        ),
+    )
 
     def make_rollout(train_fn):
         def single_rollout(rng_input, meta_params):
             params, metrics = train_fn(meta_params, rng_input)
 
             fitness = metrics["returned_episode_returns"][-1]
-            return (fitness, metrics["returned_episode_returns"][-1])
+            return fitness
 
         vmap_rollout = jax.vmap(single_rollout, in_axes=(0, None))
-        rollout = jax.jit(jax.vmap(vmap_rollout, in_axes=(0, param_reshaper.vmap_dict)))
+        rollout = jax.jit(jax.vmap(vmap_rollout, in_axes=(0, 0)))
 
-        if evo_config["PMAP"]:
-            rollout = jax.pmap(rollout)
+        # if evo_config["PMAP"]:
+        #     rollout = jax.pmap(rollout)
 
         return rollout
 
@@ -779,29 +804,38 @@ if __name__ == "__main__":
     rollouts = {k: make_rollout(make_train(v)) for k, v in all_configs.items()}
 
     rng = jax.random.PRNGKey(42)
-    strategy = OpenES(
-        popsize=popsize,
-        num_dims=param_reshaper.total_params,
-        opt_name="adam",
-        lrate_init=evo_config["LR"],
-        sigma_init=evo_config["NOISE_LEVEL"],
-        sigma_decay=args.sigma_decay,
-        lrate_decay=args.lr_decay,
+
+    if args.envs == ["gridworld"]:
+        fitness_shaping_fn = identity_fitness_shaping_fn
+    else:
+        fitness_shaping_fn = centered_rank_fitness_shaping_fn
+
+    # In practice, you should set decay rate and transition steps to be how much/long you want to decay for.
+    # We set transition steps = 1 and all other hparams to match the behaviour of the original evosax here.
+    strategy = Open_ES(
+        population_size=args.popsize,
+        optimizer=optax.adam(
+            optax.schedules.exponential_decay(
+                evo_config["LR"],
+                decay_rate=args.lr_decay,
+                end_value=0,
+                transition_steps=1,
+            ),
+            b1=0.99,
+        ),
+        std_schedule=optax.schedules.exponential_decay(
+            evo_config["NOISE_LEVEL"],
+            decay_rate=args.sigma_decay,
+            end_value=0,
+            transition_steps=1,
+        ),
+        solution=params,
+        fitness_shaping_fn=fitness_shaping_fn,
     )
+
     es_params = strategy.default_params
 
-    es_logging = ESLog(
-        pholder_params=params, num_generations=num_generations, top_k=5, maximize=True
-    )
-    log = es_logging.initialize()
-    fit_shaper = FitnessShaper(
-        centered_rank=True, z_score=False, w_decay=0.0, maximize=True
-    )
-    fit_shaper_multi = FitnessShaper(
-        centered_rank=True, z_score=False, w_decay=0.0, maximize=False
-    )
-
-    state = strategy.initialize(rng, es_params)
+    state = strategy.init(key=rng, params=es_params, mean=params)
 
     most_neg = {env: 0 for env in evo_config["ENV_NAME"]}
 
@@ -810,6 +844,7 @@ if __name__ == "__main__":
 
         rng, rng_ask, rng_eval = jax.random.split(rng, 3)
         x, state = jax.jit(strategy.ask)(rng_ask, state, es_params)
+        x = jax.device_put(x, sharding_p)
 
         # Set up antithetic task sampling by repeating each optimizer.
         if args.envs == ["gridworld"]:
@@ -820,11 +855,15 @@ if __name__ == "__main__":
             new_orders = jnp.array([x for y in new_orders for x in y])
             x = x[new_orders]
 
-        reshaped_params = param_reshaper.reshape(x)
         fit_info = {}
 
-        fit_info[f"meta learning rate"] = state.opt_state.lrate
-        fit_info[f"meta noise sigma"] = state.sigma
+        wandb.log(
+            {
+                "evo/std":state.std, 
+                "evo/lr":evo_config["LR"]*(args.lr_decay**gen),
+            },
+            step = gen
+        )
 
         all_fitness = []
 
@@ -845,75 +884,77 @@ if __name__ == "__main__":
                 batch_rng = jnp.tile(batch_rng, (args.popsize, 1, 1))
 
             if args.pmap:
-                batch_rng_pmap = jnp.reshape(
-                    batch_rng, (jax.local_device_count(), -1, num_rollouts, 2)
-                )
-                fitness, unreg_fitness = rollout(batch_rng_pmap, reshaped_params)
-
+                batch_rng_pmap = jax.device_put(batch_rng, sharding_rng)
+                fitness = rollout(batch_rng_pmap, x)
+                fitness = jax.device_get(fitness)
                 fitness = fitness.reshape(-1, evo_config["NUM_ROLLOUTS"]).mean(axis=1)
-                unreg_fitness = unreg_fitness.reshape(
-                    -1, evo_config["NUM_ROLLOUTS"]
-                ).mean(axis=1)
+
             else:
                 batch_rng = jnp.reshape(batch_rng, (-1, num_rollouts, 2))
-                fitness, unreg_fitness = rollout(batch_rng, reshaped_params)
+                fitness = rollout(batch_rng, x)
                 fitness = fitness.mean(axis=1)
-                unreg_fitness = unreg_fitness.mean(axis=1)
-
-            print(f"fitness:       {fitness}")
-
-            fit_info[f"{env}/fitness_notnorm_{env}"] = jnp.mean(fitness)
-            fit_info[f"{env}/best_fitness_{env}"] = jnp.max(fitness)
-            fit_info[f"{env}/worst_fitness{env}"] = jnp.min(fitness)
 
             fitness = jnp.nan_to_num(fitness, nan=-100000)
+
+            print(f"fitness:       {fitness}")
             print(f"mean fitness_{env}  =   {jnp.mean(fitness):.3f}")
-
-            fit_re = fit_shaper.apply(x, fitness)
-
             print(f"fitness_spread at gen {gen} is {fitness.max()-fitness.min()}")
-            log = es_logging.update(log, x, fitness)
-            print(
-                f"Generation: {gen}, Best: {log['log_top_1'][gen]}, Fitness: {fitness.mean()}"
-            )
+
             fit_history.append(fitness.mean())
 
             fitness_var = jnp.var(fitness)
-            dispersion = fitness_var / jnp.abs(fitness.mean())
-
-            param_sum = state.mean.sum()
-            param_abs_sum = jnp.abs(state.mean).sum()
-            param_abs_mean = jnp.abs(state.mean).mean()
             fitness_spread = fitness.max() - fitness.min()
 
+            # PPO_TEMP is set to the return obtained by PPO with Adam, and is used to normalise across environments
             fit_norm = fitness / all_configs[env]["PPO_TEMP"]
 
             mean_norm = fit_norm.mean()
 
             wandb.log(
                 {
-                    f"{env}/avg_fitness": fitness.mean(),
-                    f"{env}/fitness_histo_{env}": wandb.Histogram(fitness, num_bins=16),
-                    f"{env}/fitness_spread_{env}": fitness_spread,
-                    f"{env}/fitness_variance": fitness_var,
-                    f"{env}_norm_fit": mean_norm,
-                    f"{env}_norm_histo": wandb.Histogram(fit_norm, num_bins=16),
-                    "dispersion_coeff": dispersion,
-                    **fit_info,
-                }
+                    f"training/{env}/avg_fitness": fitness.mean(),
+                    f"training/{env}/fitness_histo": wandb.Histogram(
+                        fitness, num_bins=16
+                    ),
+                    f"training/{env}/fitness_spread": fitness_spread,
+                    f"training/{env}/fitness_variance": fitness_var,
+                    f"training/{env}/normalised_fitness": mean_norm,
+                    f"training/{env}/normalised_histo": wandb.Histogram(
+                        fit_norm, num_bins=16
+                    ),
+                    f"training/{env}/best_fitness": jnp.max(fitness),
+                    f"training/{env}/worst_fitness": jnp.min(fitness),
+                },
+                step=gen,
             )
 
             all_fitness.append(fit_norm)
 
         fitnesses = jnp.stack(all_fitness, axis=0)
-
         fitnesses_mean = jnp.mean(fitnesses, axis=0)
 
         wandb.log(
             {
-                "average normalised fit": fitnesses_mean.mean(),
-                "average_histo": wandb.Histogram(fitnesses_mean, num_bins=16),
-            }
+                "training/average_over_env/normalised_fitness": fitnesses_mean.mean(),
+                "training/average_over_env/normalised_histo": wandb.Histogram(
+                    fitnesses_mean, num_bins=16
+                ),
+            },
+            step=gen,
+        )
+
+        param_sum = state.mean.sum()
+        param_abs_sum = jnp.abs(state.mean).sum()
+        param_abs_mean = jnp.abs(state.mean).mean()
+
+        wandb.log(
+            {
+                "param_stats/param_sum": state.mean.sum(),
+                "param_stats/param_abs_sum": jnp.abs(state.mean).sum(),
+                "param_stats/param_abs_mean": jnp.abs(state.mean).mean(),
+                "param_stats/param_mean": state.mean.mean(),
+            },
+            step=gen,
         )
 
         # normalization for antithetic task sampling
@@ -921,16 +962,22 @@ if __name__ == "__main__":
             first_greater = jnp.greater(fitness[::2], fitness[1::2])
             rank_fitness = jnp.zeros_like(fitness)
             rank_fitness = rank_fitness.at[::2].set(-1 * first_greater.astype(float))
-            fitness_rerank = rank_fitness.at[1::2].set(
+            fitnesses_mean = rank_fitness.at[1::2].set(
                 first_greater.astype(float) - 1.0
             )
-        else:
-            fitness_rerank = fit_shaper.apply(x, fitnesses_mean)
 
-        state = jax.jit(strategy.tell)(x, fitness_rerank, state, es_params)
+        # use standard key as update is deterministic
+        # multiply fitness by -1 since the new evosax is only set to minimise!
+        x = jax.device_get(x)
+        state, metrics = jax.jit(strategy.tell)(
+            jax.random.PRNGKey(0), x, -1 * fitnesses_mean, state, es_params
+        )
+        wandb.log(
+            {"training/average_over_env/best_fitness": -1 * metrics["best_fitness"]}, step=gen
+        )
 
         if gen % save_every_k_gens == 0:
-            print("SAVING!")
+            print("SAVING & EVALUATING!")
             jnp.save(osp.join(save_dir, f"curr_param_{gen}.npy"), state.mean)
             np.save(osp.join(save_dir, f"fit_history.npy"), np.array(fit_history))
 
@@ -955,4 +1002,6 @@ if __name__ == "__main__":
                 larger=args.larger,
                 training=True,
                 grids=grids,
+                params=strategy.get_mean(state),
+                mesh=mesh,
             )

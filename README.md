@@ -19,26 +19,28 @@ This is the official implementation of <em>OPEN</em> from *Can Learned Optimizat
 
 # 🖥️ Usage
 
-All files for running <em>OPEN</em> are stored in <rl_optimizer/>.
+All files for running <em>OPEN</em> are stored in `<rl_optimizer/>`.
 
 ## 🏋️‍♀️ Training
-Alongside training code in `rl_optimizer/train.py`, we include configs for [`freeway`, `asterix`, `breakout`, `spaceinvaders`, `ant`, `gridworld`]. We enable parallelisation over multiple GPUs with `<--pmap>`. The flag `<--larger>` can be used to increase the size of the network in <em>OPEN</em>. To learn an optimizer in one or a combination of these environments, run:
+Alongside training code in `rl_optimizer/train.py`, we include configs for [`freeway`, `asterix`, `breakout`, `spaceinvaders`, `ant`, `gridworld`]. We automate parallelisation over multiple GPUs using JAX sharding. The flag `<--larger>` can be used to increase the size of the network in <em>OPEN</em>. To learn an optimizer in one or a combination of these environments run:
 ```bash
-python3 -m rl_optimizer.train --envs <env> --num-rollouts <num_rollouts> --popsize <popsize> --noise-level <sigma_init> --sigma-decay <sigma_decay> --lr <lr> --lr-decay <lr-decay> --num-generations <num_gens> --save-every-k <evaluation_frequency> --wandb-name "<wandb name>" --wandb-entity "<wandb entity>" [--pmap --larger]
+python3 train.py --envs <env> --num-rollouts <num_rollouts> --popsize <popsize> --noise-level <sigma_init> --sigma-decay <sigma_decay> --lr <lr> --lr-decay <lr-decay> --num-generations <num_gens> --save-every-k <evaluation_frequency> --wandb-name "<wandb name>" --wandb-entity "<wandb entity>" [--larger]
 ```
 
-This will save a checkpoint, and evaluate the performance of the optimizer, every $k$ steps. Please note that `gridworld` can not be run in tandem with other environments since it is the only environment to which we apply antithetic task sampling.
+This will save a checkpoint, and evaluate the performance of the optimizer, every $k$ steps. Please note that `gridworld` can not be run in tandem with other environments as it is the only environment which we apply antithetic task sampling to.
 
 We include our hyperparameters in the paper. An example usage is:
 ```bash
-python3 -m rl_optimizer.train --envs breakout --pmap --num-rollouts 1 --popsize 64 --noise-level 0.03 --sigma-decay 0.999 --lr 0.03 --lr-decay 0.999 --num-generations 500 --save-every-k 24 --wandb-name "<em>OPEN</em> Breakout"
+python3 train.py --envs breakout --num-rollouts 1 --popsize 64 --noise-level 0.03 --sigma-decay 0.999 --lr 0.03 --lr-decay 0.999 --num-generations 500 --save-every-k 24 --wandb-name "OPEN Breakout"
 ```
 
 ## 🔬 Evaluation
 
-To evaluate the performance of learned optimizers, run the following command by providing the relevant wandb run IDs to `<--exp-name>` and the generation number to `--exp-num`. For experimental purposes, we provide learned weights for the trained optimizers from our paper for the aforementioned environments in `rl_optimizer/pretrained`. These can be used with the argument `<--pretrained>` in place of wandb IDs. Use the <--larger> flag if this was used in training, and to experiment with our pretrained `<multi>` optimizers pass the `<--multi>` flag.
+To evaluate the performance of learned optimizers, run the following command by providing the relevant wandb run IDs to `<--exp-name>` and the generation number to `--exp-num`. This code is run intermittently during training too.
+
+For experimental purposes, we provide learned weights for the trained optimizers from our paper for the aforementioned environments in `rl_optimizer/pretrained`. These can be used with the argument `<--pretrained>` in place of wandb IDs. Use the <--larger> flag if this was used in training, and to experiment with our pretrained `<multi>` optimizers pass the `<--multi>` flag.
 ```bash
-python3 -m rl_optimizer.eval --envs <env-names> --exp-name <wandb experiment IDs> --exp-num <generation numbers>  --num-runs 16 --title <foldername for saving files> --pmap [--pretrained --multi --larger]
+python3 -m rl_optimizer.eval --envs <env-names> --exp-name <wandb experiment IDs> --exp-num <generation numbers>  --num-runs 16 --title <foldername for saving files> [--pretrained --multi --larger]
 ```
 
 
@@ -57,14 +59,18 @@ pip install -r setup/requirements.txt
 ```
 
 ## 🐋 Docker 
-We also provide files to help build a Docker image. This requires filling in line 17 of <setup/Dockerfile> with your wandb API key; we use wandb for logging checkpoints throughout training.
+We also provide files to help build a Docker image. Since we use wandb for logging checkpoints, you should supply this as an argument to `build_docker.sh`.
 
 ```bash
 cd setup
-docker build . -t open
+chmod +x build_docker.sh
+./build_docker.sh {WANDB_API_KEY}
 cd ..
-docker run -it --rm --gpus '"device=<GPU_names>"' -v $(pwd):/rl_optimizer open
+chmod +x run_docker.sh
+./run_docker.sh {GPU_NAMES}
 ```
+
+For example, starting the docker container with access to GPUs `0` and `1` can be done as `./run_docker.sh 0,1`
 
 
 # 📚 Related Work
