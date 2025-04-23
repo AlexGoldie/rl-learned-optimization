@@ -40,7 +40,7 @@ To evaluate the performance of learned optimizers, run the following command by 
 
 For experimental purposes, we provide learned weights for the trained optimizers from our paper for the aforementioned environments in `rl_optimizer/pretrained`. These can be used with the argument `<--pretrained>` in place of wandb IDs. Use the <--larger> flag if this was used in training, and to experiment with our pretrained `<multi>` optimizers pass the `<--multi>` flag.
 ```bash
-python3 -m rl_optimizer.eval --envs <env-names> --exp-name <wandb experiment IDs> --exp-num <generation numbers>  --num-runs 16 --title <foldername for saving files> [--pretrained --multi --larger]
+python3 rl_optimizer.eval --envs <env-names> --exp-name <wandb experiment IDs> --exp-num <generation numbers>  --num-runs 16 --title <foldername for saving files> [--pretrained --multi --larger]
 ```
 
 
