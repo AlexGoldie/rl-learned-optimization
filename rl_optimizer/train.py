@@ -876,7 +876,7 @@ if __name__ == "__main__":
 
             # Antithetic task sampling for gridworld - antithetic perturbatiosn are evaluated on the same rng
             if args.envs == ["gridworld"]:
-                batch_rng = jax.random.split(rng_eval, args.popsize / 2)
+                batch_rng = jax.random.split(rng_eval, args.popsize // 2)
                 batch_rng = jnp.repeat(batch_rng, 2, axis=0)
 
             else:
